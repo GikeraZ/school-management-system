@@ -1,0 +1,29 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+!.env.example
+
+# VSCode / IDE
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Supabase temp / local artifacts
+supabase/.temp/
+
+# Build / Tmp
+*.tsbuildinfo
+
+# Coverage / logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
