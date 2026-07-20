@@ -1,0 +1,21 @@
+{
+  "name": "School Management System",
+  "short_name": "SchoolSMS",
+  "description": "Manage exams, fees & parent SMS for your school",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#1c5cf5",
+  "orientation": "any",
+  "scope": "/",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/school.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["education", "productivity"]
+}

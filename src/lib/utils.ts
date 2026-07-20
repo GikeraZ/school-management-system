@@ -61,6 +61,26 @@ export function isValidE164(phone: string): boolean {
   return /^\+[1-9]\d{6,14}$/.test(phone.trim());
 }
 
+// Auto-generate remarks based on grade letter.
+export function autoRemarks(grade: string | null): string {
+  if (!grade) return "";
+  switch (grade) {
+    case "A":  return "Excellent";
+    case "A-": return "Very Good";
+    case "B+": return "Good";
+    case "B":  return "Above Average";
+    case "B-": return "Average";
+    case "C+": return "Below Average";
+    case "C":  return "Needs Improvement";
+    case "C-": return "Poor";
+    case "D+": return "Very Poor";
+    case "D":  return "Terrible";
+    case "D-": return "Failing";
+    case "E":  return "No Grade";
+    default:   return "";
+  }
+}
+
 export function exportToCsv(filename: string, rows: Record<string, unknown>[]) {
   if (rows.length === 0) return;
   const headers = Object.keys(rows[0]);
