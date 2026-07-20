@@ -23,6 +23,7 @@ import {
   Users,
   BarChart3,
   FileSpreadsheet,
+  Eraser,
 } from "lucide-react";
 import { computeGrade, gradeColor, autoRemarks } from "@/lib/utils";
 import { useStudents } from "@/lib/hooks";
@@ -66,12 +67,15 @@ export default function ResultsEntry() {
   const [searchQuery, setSearchQuery] = useState("");
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => { setStreamId(""); }, [gradeId]);
-  useEffect(() => { setExamId(""); setSubjectId(""); }, [streamId]);
+  // Only reset stream when grade changes
+  useEffect(() => { setStreamId(""); setSubjectId(""); }, [gradeId]);
+  // Reset exam when academic year or term changes
+  useEffect(() => { setExamId(""); }, [academicYear, term]);
 
   const streams = useStreams(gradeId);
   const students = useStudents(gradeId, streamId);
 
+  // Derive available academic years, terms, and exams from data
   const academicYears = useMemo(() => {
     if (!exams.data) return [];
     const years = new Set(exams.data.map((e) => e.academic_year));
@@ -131,9 +135,9 @@ export default function ResultsEntry() {
   const [examModal, setExamModal] = useState(false);
   const [examForm, setExamForm] = useState({
     name: "",
-    term: term || "Term 1",
+    term: "Term 1",
     exam_date: "",
-    academic_year: academicYear || String(new Date().getFullYear()),
+    academic_year: String(new Date().getFullYear()),
   });
   const [importModal, setImportModal] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -264,7 +268,7 @@ export default function ResultsEntry() {
       qc.invalidateQueries({ queryKey: ["results-form", examId, subjectId, streamId] });
       qc.invalidateQueries({ queryKey: ["results"] });
       toast(didPublish ? "Results submitted & published" : "Draft saved successfully", "success");
-      setPublished(didPublish);
+      if (didPublish) setPublished(true);
     },
     onError: (e: any) => toast(e.message, "error"),
   });
@@ -295,8 +299,7 @@ export default function ResultsEntry() {
     const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Results Template");
-    const colWidths = [{ wch: 20 }, { wch: 25 }, { wch: 20 }];
-    ws["!cols"] = colWidths;
+    ws["!cols"] = [{ wch: 20 }, { wch: 25 }, { wch: 20 }];
     XLSX.writeFile(wb, "results-import-template.xlsx");
     toast("Template downloaded", "success");
   }
@@ -308,8 +311,7 @@ export default function ResultsEntry() {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet);
 
         const parsed = jsonData.map((row) => {
@@ -336,7 +338,7 @@ export default function ResultsEntry() {
     if (!students.data || !importPreview.length) return;
     const studentMap = new Map(students.data.map((s) => [s.admission_number, s]));
     let imported = 0;
-    let notFound = 0;
+    let skipped = 0;
 
     importPreview.forEach((row) => {
       const student = studentMap.get(row.admission_number);
@@ -353,18 +355,26 @@ export default function ResultsEntry() {
           }));
           imported++;
         } else {
-          notFound++;
+          skipped++;
         }
       } else {
-        notFound++;
+        skipped++;
       }
     });
 
-    toast(`Imported ${imported} results${notFound > 0 ? `. ${notFound} rows skipped (not found or invalid marks)` : ""}`, imported > 0 ? "success" : "error");
+    toast(
+      `Imported ${imported} result${imported !== 1 ? "s" : ""}${skipped > 0 ? `. ${skipped} row${skipped !== 1 ? "s" : ""} skipped` : ""}`,
+      imported > 0 ? "success" : "error",
+    );
     setImportModal(false);
     setImportFile(null);
     setImportPreview([]);
   }
+
+  const clearAllMarks = useCallback(() => {
+    setRows({});
+    setValidationErrors({});
+  }, []);
 
   const cancelAll = useCallback(() => {
     if (!existing) {
@@ -383,32 +393,36 @@ export default function ResultsEntry() {
     setSearchQuery("");
   }, [existing]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent, studentId: string, field: "marks" | "remarks") => {
-    if (e.key === "Tab" && !e.shiftKey) return;
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const studentIds = filteredStudents.map((s) => s.id);
-      const idx = studentIds.indexOf(studentId);
-      if (field === "marks") {
-        const nextRemarksInput = marksInputRefs.current[studentIds[idx] + "_remarks"];
-        if (nextRemarksInput) nextRemarksInput.focus();
-        else if (idx < studentIds.length - 1) {
-          const nextInput = marksInputRefs.current[studentIds[idx + 1]];
-          if (nextInput) nextInput.focus();
-        }
-      } else {
-        if (idx < studentIds.length - 1) {
-          const nextInput = marksInputRefs.current[studentIds[idx + 1]];
-          if (nextInput) nextInput.focus();
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent, studentId: string, field: "marks" | "remarks") => {
+      if (e.key === "Tab" && !e.shiftKey) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const ids = filteredStudents.map((s) => s.id);
+        const idx = ids.indexOf(studentId);
+        if (field === "marks") {
+          const remarksEl = marksInputRefs.current[studentId + "_remarks"];
+          if (remarksEl) remarksEl.focus();
+          else if (idx < ids.length - 1) marksInputRefs.current[ids[idx + 1]]?.focus();
+        } else if (idx < ids.length - 1) {
+          marksInputRefs.current[ids[idx + 1]]?.focus();
         }
       }
-    }
-  }, [filteredStudents]);
+    },
+    [filteredStudents],
+  );
 
   const selectedSubject = subjects.data?.find((s) => s.id === subjectId);
   const selectedExam = exams.data?.find((e) => e.id === examId);
   const selectedGrade = grades.data?.find((g) => g.id === gradeId);
   const selectedStream = streams.data?.find((s) => s.id === streamId);
+
+  // Helpers for empty-state guidance
+  const hasNoGrades = !grades.isLoading && grades.data?.length === 0;
+  const hasNoSubjects = !subjects.isLoading && subjects.data?.length === 0;
+  const hasNoExams = !exams.isLoading && exams.data?.length === 0;
+  const hasNoStreams = !streams.isLoading && streams.data?.length === 0 && !!gradeId;
+  const hasNoStudents = !students.isLoading && students.data?.length === 0 && !!streamId;
 
   return (
     <div className="space-y-4">
@@ -431,14 +445,14 @@ export default function ResultsEntry() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
           <div>
             <Label>Academic Year</Label>
-            <Select value={academicYear} onChange={(e) => { setAcademicYear(e.target.value); setExamId(""); setSubjectId(""); }}>
+            <Select value={academicYear} onChange={(e) => setAcademicYear(e.target.value)}>
               <option value="">All Years</option>
               {academicYears.map((y) => <option key={y} value={y}>{y}</option>)}
             </Select>
           </div>
           <div>
             <Label>Term</Label>
-            <Select value={term} onChange={(e) => { setTerm(e.target.value); setExamId(""); setSubjectId(""); }}>
+            <Select value={term} onChange={(e) => setTerm(e.target.value)}>
               <option value="">All Terms</option>
               {terms.map((t) => <option key={t} value={t}>{t}</option>)}
             </Select>
@@ -446,7 +460,7 @@ export default function ResultsEntry() {
           <div>
             <Label>Exam</Label>
             <div className="flex gap-1">
-              <Select value={examId} onChange={(e) => { setExamId(e.target.value); setSubjectId(""); }}>
+              <Select value={examId} onChange={(e) => setExamId(e.target.value)}>
                 <option value="">Select exam</option>
                 {filteredExams.map((ex) => (
                   <option key={ex.id} value={ex.id}>{ex.name} ({ex.term})</option>
@@ -461,22 +475,22 @@ export default function ResultsEntry() {
           </div>
           <div>
             <Label>Class / Form</Label>
-            <Select value={gradeId} onChange={(e) => { setGradeId(e.target.value); setStreamId(""); setSubjectId(""); }}>
+            <Select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
               <option value="">Select class</option>
               {grades.data?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
             </Select>
           </div>
           <div>
             <Label>Stream</Label>
-            <Select value={streamId} onChange={(e) => { setStreamId(e.target.value); setSubjectId(""); }} disabled={!gradeId}>
-              <option value="">Select stream</option>
+            <Select value={streamId} onChange={(e) => setStreamId(e.target.value)} disabled={!gradeId}>
+              <option value="">{hasNoStreams ? "No streams available" : "Select stream"}</option>
               {streams.data?.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </Select>
           </div>
           <div>
             <Label>Subject</Label>
             <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} disabled={!streamId}>
-              <option value="">Select subject</option>
+              <option value="">{hasNoSubjects ? "No subjects available" : "Select subject"}</option>
               {subjects.data?.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </Select>
           </div>
@@ -498,12 +512,35 @@ export default function ResultsEntry() {
         )}
       </Card>
 
-      {/* Empty state */}
+      {/* Empty / guidance states */}
       {!ready && (
         <EmptyState
           icon={<ClipboardList size={40} />}
           title="Choose selectors to begin"
-          description="Select academic year, term, exam, class, stream and subject to enter marks."
+          description={
+            hasNoGrades
+              ? "No classes found. Ask the Head Teacher to create classes under Management > Grades first."
+              : hasNoExams
+              ? "No exams found. Click the + button next to the Exam selector to create one."
+              : hasNoSubjects
+              ? "No subjects found. Ask the Head Teacher to create subjects under Management > Subjects."
+              : hasNoStreams && gradeId
+              ? "No streams found for this class. Ask the Head Teacher to add streams under Management > Streams."
+              : hasNoStudents && streamId
+              ? "No students found in this class/stream. Add students via the Students page."
+              : "Select academic year, term, exam, class, stream and subject to enter marks."
+          }
+          action={
+            hasNoGrades && isHeadTeacher ? (
+              <Button onClick={() => window.location.href = "/grades"}>Create Classes</Button>
+            ) : hasNoExams && isHeadTeacher ? (
+              <Button onClick={() => setExamModal(true)}><Plus size={16} /> Create Exam</Button>
+            ) : hasNoSubjects && isHeadTeacher ? (
+              <Button onClick={() => window.location.href = "/subjects"}>Create Subjects</Button>
+            ) : hasNoStreams && isHeadTeacher && gradeId ? (
+              <Button onClick={() => window.location.href = "/streams"}>Add Streams</Button>
+            ) : undefined
+          }
         />
       )}
 
@@ -557,6 +594,10 @@ export default function ResultsEntry() {
                   <Upload size={14} /> Import
                 </Button>
 
+                <Button variant="outline" size="sm" onClick={clearAllMarks} title="Clear all entered marks">
+                  <Eraser size={14} /> Clear
+                </Button>
+
                 <Button variant="outline" size="sm" onClick={cancelAll}>
                   <X size={14} /> Cancel
                 </Button>
@@ -564,8 +605,7 @@ export default function ResultsEntry() {
                 <Button
                   variant="outline"
                   onClick={() => saveMutation.mutate(false)}
-                  loading={saveMutation.isPending && !published}
-                  disabled={published}
+                  loading={saveMutation.isPending}
                 >
                   <Save size={16} /> Save Draft
                 </Button>
@@ -573,7 +613,7 @@ export default function ResultsEntry() {
                 {isHeadTeacher && (
                   <Button
                     onClick={() => saveMutation.mutate(true)}
-                    loading={saveMutation.isPending && published}
+                    loading={saveMutation.isPending}
                   >
                     <Send size={16} /> {published ? "Re-submit" : "Submit Results"}
                   </Button>
@@ -724,20 +764,19 @@ export default function ResultsEntry() {
         }
       >
         <div className="space-y-4">
-          <div className="rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center transition-colors hover:border-brand-400 hover:bg-brand-50/30">
+          <label className="block cursor-pointer rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center transition-colors hover:border-brand-400 hover:bg-brand-50/30">
             <FileSpreadsheet size={32} className="mx-auto mb-2 text-slate-400" />
             <p className="text-sm text-slate-600">
-              {importFile ? importFile.name : "Drop an Excel or CSV file here"}
+              {importFile ? importFile.name : "Click to choose an Excel or CSV file"}
             </p>
             <p className="mt-1 text-xs text-slate-400">Supports .xlsx, .xls, .csv</p>
             <input
               type="file"
               accept=".xlsx,.xls,.csv"
-              className="absolute inset-0 cursor-pointer opacity-0"
+              className="sr-only"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f); }}
-              style={{ position: "relative" }}
             />
-          </div>
+          </label>
 
           <div className="flex items-center justify-between">
             <Button variant="ghost" size="sm" onClick={downloadTemplate}>

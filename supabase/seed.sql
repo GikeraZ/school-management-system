@@ -1,60 +1,82 @@
 -- ============================================================================
 -- Seed data: demo academic structure
 -- ============================================================================
--- NOTE: The demo Head Teacher user must be created via the Supabase Dashboard
--- or Auth Admin API (not a raw SQL insert) because GoTrue requires specific
--- auth schema fields.
---
--- To create via the Dashboard:
---   1. Go to Authentication > Users > Add user
---   2. Email: head@school.ac.ke   Password: School@123
---   3. Check "Auto Confirm User"
---   4. Then run the user_roles UPDATE below to promote to head_teacher.
---
--- To create via CLI:
---   supabase projects api-keys --project-ref <ref>
---   curl -X POST https://<ref>.supabase.co/auth/v1/admin/users \
---     -H "apikey: <service_role_key>" \
---     -H "Authorization: Bearer <service_role_key>" \
---     -H "Content-Type: application/json" \
---     -d '{"email":"head@school.ac.ke","password":"School@123","email_confirm":true}'
+-- Run this in the Supabase SQL Editor to populate demo data.
+-- All inserts use ON CONFLICT so they are safe to re-run.
 -- ============================================================================
 
--- Promote head teacher (replace <USER_ID> with the auth.users id from above)
--- update public.user_roles set role = 'head_teacher' where user_id = '<USER_ID>';
-
 -- ---------------------------------------------------------------------------
--- Academic structure
+-- Academic structure: Grades
 -- ---------------------------------------------------------------------------
-insert into public.grades (id, name, level) values
-  ('22222222-2222-2222-2222-222222222201', 'Grade 4', 4),
-  ('22222222-2222-2222-2222-222222222202', 'Grade 5', 5),
-  ('22222222-2222-2222-2222-222222222203', 'Grade 6', 6)
+insert into public.grades (name, level) values
+  ('Grade 1', 1),
+  ('Grade 2', 2),
+  ('Grade 3', 3),
+  ('Grade 4', 4),
+  ('Grade 5', 5),
+  ('Grade 6', 6),
+  ('Grade 7', 7),
+  ('Grade 8', 8)
 on conflict (level) do nothing;
 
-insert into public.streams (id, grade_id, name) values
-  ('33333333-3333-3333-3333-333333333301', '22222222-2222-2222-2222-222222222203', 'East'),
-  ('33333333-3333-3333-3333-333333333302', '22222222-2222-2222-2222-222222222203', 'West')
-on conflict (id) do nothing;
+-- ---------------------------------------------------------------------------
+-- Streams for every grade (North & South)
+-- ---------------------------------------------------------------------------
+insert into public.streams (grade_id, name)
+select id, 'North' from public.grades
+on conflict (grade_id, name) do nothing;
 
-insert into public.subjects (id, name, code) values
-  ('44444444-4444-4444-4444-444444444401', 'Mathematics', 'MATH'),
-  ('44444444-4444-4444-4444-444444444402', 'English', 'ENG'),
-  ('44444444-4444-4444-4444-444444444403', 'Science', 'SCI'),
-  ('44444444-4444-4444-4444-444444444404', 'Kiswahili', 'KIS')
+insert into public.streams (grade_id, name)
+select id, 'South' from public.grades
+on conflict (grade_id, name) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- Subjects
+-- ---------------------------------------------------------------------------
+insert into public.subjects (name, code) values
+  ('Mathematics', 'MATH'),
+  ('English', 'ENG'),
+  ('Science', 'SCI'),
+  ('Kiswahili', 'KIS'),
+  ('Social Studies', 'SST'),
+  ('Religious Education', 'RE'),
+  ('Creative Arts', 'ART'),
+  ('Physical Education', 'PE')
 on conflict (code) do nothing;
 
--- Exam
-insert into public.exams (id, name, term, academic_year, exam_date) values
-  ('55555555-5555-5555-5555-555555555501', 'End Term 1', 'Term 1', '2026', '2026-03-20')
-on conflict (id) do nothing;
+-- ---------------------------------------------------------------------------
+-- Exams (2026 academic year)
+-- ---------------------------------------------------------------------------
+insert into public.exams (name, term, academic_year, exam_date) values
+  ('CAT 1', 'Term 1', '2026', '2026-02-14'),
+  ('Midterm', 'Term 1', '2026', '2026-03-07'),
+  ('End Term 1', 'Term 1', '2026', '2026-04-03'),
+  ('CAT 1', 'Term 2', '2026', '2026-05-22'),
+  ('Midterm', 'Term 2', '2026', '2026-06-19'),
+  ('End Term 2', 'Term 2', '2026', '2026-07-31'),
+  ('CAT 1', 'Term 3', '2026', '2026-09-11'),
+  ('Midterm', 'Term 3', '2026', '2026-10-09'),
+  ('End Term 3', 'Term 3', '2026', '2026-11-27')
+on conflict do nothing;
 
--- Fee structure for Grade 6
-insert into public.fee_structures (grade_id, term, academic_year, amount) values
-  ('22222222-2222-2222-2222-222222222203', 'Term 1', '2026', 20000)
+-- ---------------------------------------------------------------------------
+-- Fee structures
+-- ---------------------------------------------------------------------------
+insert into public.fee_structures (grade_id, term, academic_year, amount)
+select id, 'Term 1', '2026', 15000 from public.grades where level = 6
 on conflict (grade_id, term, academic_year) do nothing;
 
--- Students (generated per stream with E.164 parent phones).
+insert into public.fee_structures (grade_id, term, academic_year, amount)
+select id, 'Term 2', '2026', 15000 from public.grades where level = 6
+on conflict (grade_id, term, academic_year) do nothing;
+
+insert into public.fee_structures (grade_id, term, academic_year, amount)
+select id, 'Term 3', '2026', 15000 from public.grades where level = 6
+on conflict (grade_id, term, academic_year) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- Students (10 per stream for Grade 6, North & South)
+-- ---------------------------------------------------------------------------
 do $$
 declare
   s record;
@@ -63,7 +85,11 @@ declare
   i int;
   adm int := 6001;
 begin
-  for s in select id, grade_id from public.streams where grade_id = '22222222-2222-2222-2222-222222222203' loop
+  for s in
+    select id, grade_id
+    from public.streams
+    where grade_id = (select id from public.grades where level = 6)
+  loop
     for i in 1..10 loop
       insert into public.students (
         admission_number, full_name, gender, grade_id, stream_id,
