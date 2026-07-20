@@ -13,16 +13,8 @@ export const supabase = createClient(url ?? "https://placeholder.supabase.co", a
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true,
+    detectSessionInUrl: false,
   },
-});
-
-// Listen for JWT errors globally and sign the user out.
-supabase.auth.onAuthStateChange((event) => {
-  if (event === "SIGNED_OUT") {
-    localStorage.removeItem("supabase.auth.token");
-    window.location.href = "/login";
-  }
 });
 
 export const EDGE_BASE = `${url ?? ""}/functions/v1`;

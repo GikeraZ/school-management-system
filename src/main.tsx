@@ -17,7 +17,8 @@ const queryClient = new QueryClient({
     queries: { retry: (failureCount, error) => {
       const msg = (error as any)?.message ?? "";
       if (isJwtError(msg)) {
-        supabase.auth.signOut().then(() => { window.location.href = "/login"; });
+        queryClient.clear();
+        supabase.auth.signOut({ scope: "local" });
         return false;
       }
       return failureCount < 2;
@@ -25,7 +26,8 @@ const queryClient = new QueryClient({
     mutations: { onError: (error) => {
       const msg = (error as any)?.message ?? "";
       if (isJwtError(msg)) {
-        supabase.auth.signOut().then(() => { window.location.href = "/login"; });
+        queryClient.clear();
+        supabase.auth.signOut({ scope: "local" });
       }
     }},
   },

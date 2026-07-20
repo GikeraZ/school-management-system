@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import type { UserRole, UserRoleRow } from "@/lib/types";
@@ -32,6 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [roleRow, setRoleRow] = useState<UserRoleRow | null>(null);
   const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
 
   async function loadRole(u: User | null) {
     if (!u) {
@@ -57,15 +59,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (event === "SIGNED_OUT") {
         setUser(null);
         setRoleRow(null);
+        qc.clear();
       } else if (event === "SIGNED_IN" && session) {
         setUser(session.user);
         loadRole(session.user);
       }
     });
     return () => sub.subscription.unsubscribe();
-  }, []);
+  }, [qc]);
 
   async function signIn(email: string, password: string) {
+    // Clear any stale data from previous session before signing in
+    qc.clear();
+    setRoleRow(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (!error) {
       const { data } = await supabase.auth.getUser();
@@ -84,9 +90,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: "local" });
     setUser(null);
     setRoleRow(null);
+    qc.clear();
   }
 
   const value: AuthState = {
