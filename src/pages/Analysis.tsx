@@ -4,10 +4,10 @@ import { supabase } from "@/lib/supabase";
 import { useGrades, useStreams, useSubjects, useExams } from "@/lib/hooks";
 import { Button, Select, Label, Card } from "@/components/ui";
 import { EmptyState, Spinner } from "@/components/EmptyState";
-import { BarChart3, TrendingUp, Award } from "lucide-react";
-import { computeGrade, gradeColor, formatDate } from "@/lib/utils";
+import { BarChart3, TrendingUp, Award, Trophy } from "lucide-react";
+import { computeGrade, gradeColor, formatDate, gradeToPoints } from "@/lib/utils";
 
-type Tab = "subject" | "improved" | "merit";
+type Tab = "ranking" | "subject" | "improved" | "merit";
 
 interface ResultRow {
   student_id: string;
@@ -32,10 +32,12 @@ export default function Analysis() {
         <p className="text-sm text-slate-500">Performance analytics per stream and subject</p>
       </div>
       <div className="no-print flex gap-2">
+        <TabBtn active={tab === "ranking"} onClick={() => setTab("ranking")} icon={<Trophy size={16} />} label="Class Ranking" />
         <TabBtn active={tab === "subject"} onClick={() => setTab("subject")} icon={<BarChart3 size={16} />} label="Subject Analysis" />
         <TabBtn active={tab === "improved"} onClick={() => setTab("improved")} icon={<TrendingUp size={16} />} label="Most Improved" />
         <TabBtn active={tab === "merit"} onClick={() => setTab("merit")} icon={<Award size={16} />} label="Merit List" />
       </div>
+      {tab === "ranking" && <ClassRanking />}
       {tab === "subject" && <SubjectAnalysis />}
       {tab === "improved" && <MostImproved />}
       {tab === "merit" && <MeritList />}
@@ -99,6 +101,208 @@ function ClassFilter({ gradeId, setGradeId, streamId, setStreamId, subjectId, se
         </Select>
       </div>
     </Card>
+  );
+}
+
+function ClassRanking() {
+  const [gradeId, setGradeId] = useState("");
+  const [streamId, setStreamId] = useState("");
+  const [examId, setExamId] = useState("");
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["analysis-ranking", examId, streamId],
+    enabled: !!(examId && streamId),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("results")
+        .select("student_id, marks, out_of, points, subject:subjects(name), student:students(full_name, admission_number)")
+        .eq("exam_id", examId)
+        .eq("stream_id", streamId)
+        .order("marks", { ascending: false });
+      if (error) throw error;
+      const rows = data as unknown as (ResultRow & { out_of: number; points: number | null; subject: { name: string } })[];
+
+      // Aggregate per student
+      const byStudent: Record<string, {
+        full_name: string;
+        admission_number: string;
+        totalMarks: number;
+        totalOutOf: number;
+        subjectCount: number;
+        points: number[];
+        subjects: Record<string, number>;
+      }> = {};
+
+      rows.forEach((r) => {
+        if (!byStudent[r.student_id]) {
+          byStudent[r.student_id] = {
+            full_name: r.student.full_name,
+            admission_number: r.student.admission_number,
+            totalMarks: 0,
+            totalOutOf: 0,
+            subjectCount: 0,
+            points: [],
+            subjects: {},
+          };
+        }
+        const s = byStudent[r.student_id];
+        s.totalMarks += r.marks;
+        s.totalOutOf += r.out_of || 100;
+        s.subjectCount++;
+        if (r.points != null) s.points.push(r.points);
+        s.subjects[r.subject.name] = r.marks;
+      });
+
+      // Build ranked list
+      const arr = Object.entries(byStudent).map(([id, v]) => {
+        const avg = v.subjectCount ? Math.round(v.totalMarks / v.subjectCount) : 0;
+        const avgOutOf = v.subjectCount ? Math.round(v.totalOutOf / v.subjectCount) : 100;
+        const grade = computeGrade(avg, avgOutOf);
+        const meanPoints = v.points.length
+          ? Math.round((v.points.reduce((a, b) => a + b, 0) / v.points.length) * 10) / 10
+          : null;
+        return {
+          student_id: id,
+          full_name: v.full_name,
+          admission_number: v.admission_number,
+          totalMarks: v.totalMarks,
+          totalOutOf: v.totalOutOf,
+          subjectCount: v.subjectCount,
+          average: avg,
+          grade,
+          points: gradeToPoints(grade),
+          meanPoints,
+          subjects: v.subjects,
+        };
+      });
+
+      // Sort by average descending (best first)
+      arr.sort((a, b) => b.average - a.average);
+      return arr.map((r, i) => ({ ...r, position: i + 1 }));
+    },
+  });
+
+  const subjectNames = useQuery({
+    queryKey: ["ranking-subjects", examId, streamId],
+    enabled: !!(examId && streamId),
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("results")
+        .select("subject:subjects(name)")
+        .eq("exam_id", examId)
+        .eq("stream_id", streamId);
+      const set = new Set<string>();
+      (data as any[])?.forEach((r) => set.add(r.subject.name));
+      return Array.from(set);
+    },
+  });
+
+  const avg = data?.length ? Math.round(data.reduce((s, r) => s + r.average, 0) / data.length) : 0;
+  const best = data?.[0];
+  const worst = data?.[data.length - 1];
+
+  return (
+    <div className="space-y-4">
+      <ClassFilter
+        gradeId={gradeId} setGradeId={setGradeId}
+        streamId={streamId} setStreamId={setStreamId}
+        examId={examId} setExamId={setExamId}
+        showSubject={false}
+      />
+
+      {!examId && (
+        <EmptyState
+          icon={<Trophy size={40} />}
+          title="Select a stream & exam"
+          description="View overall class ranking — best to least — across all subjects."
+        />
+      )}
+
+      {examId && isLoading && <div className="flex justify-center py-10"><Spinner className="h-7 w-7" /></div>}
+
+      {examId && !isLoading && data && (
+        <>
+          {/* Summary stats */}
+          <div className="grid grid-cols-3 gap-4">
+            <Card className="p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Class Average</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{avg}%</p>
+            </Card>
+            <Card className="p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Top Performer</p>
+              <p className="mt-1 text-lg font-semibold text-green-700">{best?.full_name ?? "—"}</p>
+              {best && <p className="text-xs text-slate-500">Position 1 — {best.average}%</p>}
+            </Card>
+            <Card className="p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Lowest Performer</p>
+              <p className="mt-1 text-lg font-semibold text-red-600">{worst?.full_name ?? "—"}</p>
+              {worst && <p className="text-xs text-slate-500">Position {data.length} — {worst.average}%</p>}
+            </Card>
+          </div>
+
+          {/* Ranking table */}
+          <Card className="print-area">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b border-slate-100 bg-slate-50/50 text-left text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Pos</th>
+                    <th className="px-4 py-3 font-medium">Adm. No.</th>
+                    <th className="px-4 py-3 font-medium">Student Name</th>
+                    {subjectNames.data?.map((s) => (
+                      <th key={s} className="px-4 py-3 font-medium text-center">{s}</th>
+                    ))}
+                    <th className="px-4 py-3 font-medium text-center">Total</th>
+                    <th className="px-4 py-3 font-medium text-center">Average</th>
+                    <th className="px-4 py-3 font-medium text-center">Grade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.map((r) => (
+                    <tr
+                      key={r.student_id}
+                      className={`border-b border-slate-50 transition-colors hover:bg-slate-50/50 ${
+                        r.position === 1 ? "bg-yellow-50/40" :
+                        r.position <= 3 ? "bg-green-50/30" : ""
+                      }`}
+                    >
+                      <td className="px-4 py-2.5">
+                        <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                          r.position === 1 ? "bg-yellow-100 text-yellow-800" :
+                          r.position <= 3 ? "bg-green-100 text-green-700" :
+                          r.position <= 10 ? "bg-slate-100 text-slate-700" :
+                          "text-slate-500"
+                        }`}>
+                          {r.position}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-slate-600">{r.admission_number}</td>
+                      <td className="px-4 py-2.5 font-medium text-slate-700">{r.full_name}</td>
+                      {subjectNames.data?.map((s) => (
+                        <td key={s} className="px-4 py-2.5 text-center text-slate-600">
+                          {r.subjects[s] ?? "—"}
+                        </td>
+                      ))}
+                      <td className="px-4 py-2.5 text-center font-semibold text-slate-800">{r.totalMarks}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${gradeColor(r.grade)}`}>
+                          {r.average}%
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${gradeColor(r.grade)}`}>
+                          {r.grade}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
+      )}
+    </div>
   );
 }
 
