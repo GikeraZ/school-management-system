@@ -140,3 +140,96 @@ export interface FeeBalance {
   paid: number;
   balance: number;
 }
+
+// ---------------------------------------------------------------------------
+// School type support
+// ---------------------------------------------------------------------------
+export type SchoolType = "primary" | "secondary" | "mixed";
+export type GradingMethod = "cbc" | "kcse" | "percentage";
+
+export interface SchoolSettings {
+  id: string;
+  school_name: string;
+  school_type: SchoolType;
+  grading_method: GradingMethod;
+  motto: string | null;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  logo_url: string | null;
+  academic_year: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GradingScale {
+  id: string;
+  name: string;
+  school_type: SchoolType;
+  grading_method: GradingMethod;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface GradingBoundary {
+  id: string;
+  scale_id: string;
+  grade_letter: string;
+  min_percentage: number;
+  max_percentage: number;
+  points: number | null;
+  remarks: string | null;
+  sort_order: number;
+}
+
+export interface TeacherAssignment {
+  id: string;
+  teacher_id: string;
+  subject_id: string;
+  grade_id: string;
+  stream_id: string | null;
+  academic_year: string;
+  created_at: string;
+}
+
+export interface ClassTeacher {
+  id: string;
+  teacher_id: string;
+  grade_id: string;
+  stream_id: string | null;
+  academic_year: string;
+  created_at: string;
+}
+
+export interface TimetableSlot {
+  id: string;
+  grade_id: string;
+  stream_id: string | null;
+  subject_id: string;
+  teacher_id: string | null;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  academic_year: string;
+  created_at: string;
+}
+
+export interface StudentPromotion {
+  id: string;
+  student_id: string;
+  from_grade_id: string;
+  from_stream_id: string | null;
+  to_grade_id: string;
+  to_stream_id: string | null;
+  academic_year: string;
+  promoted_by: string | null;
+  created_at: string;
+}
+
+// Result with extra fields for position/points
+export interface ResultWithExtras extends Result {
+  points: number | null;
+  position: number | null;
+  class_position: number | null;
+  stream_position: number | null;
+}

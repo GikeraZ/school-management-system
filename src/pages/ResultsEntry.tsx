@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
-import { useGrades, useStreams, useSubjects, useExams } from "@/lib/hooks";
+import { useGrades, useStreams, useSubjects, useExams, useSchoolSettings, useGradingScales, useGradingBoundaries } from "@/lib/hooks";
 import { Button, Input, Label, Select, Card, Stat } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { EmptyState, Spinner } from "@/components/EmptyState";
@@ -24,8 +24,9 @@ import {
   BarChart3,
   FileSpreadsheet,
   Eraser,
+  Hash,
 } from "lucide-react";
-import { computeGrade, gradeColor, autoRemarks } from "@/lib/utils";
+import { computeGrade, computeGradeFromBoundaries, gradeToPoints, gradeColor, autoRemarks, computePositions } from "@/lib/utils";
 import { useStudents } from "@/lib/hooks";
 import * as XLSX from "xlsx";
 
@@ -57,6 +58,17 @@ export default function ResultsEntry() {
   const grades = useGrades();
   const subjects = useSubjects();
   const exams = useExams();
+  const { data: settings } = useSchoolSettings();
+  const { data: scales } = useGradingScales(settings?.school_type);
+  // Find the default scale matching the school's grading method
+  const activeScaleId = useMemo(() => {
+    if (!scales?.length) return undefined;
+    const match = scales.find((s) => s.grading_method === settings?.grading_method && s.is_default)
+      ?? scales.find((s) => s.grading_method === settings?.grading_method)
+      ?? scales[0];
+    return match?.id;
+  }, [scales, settings?.grading_method]);
+  const { data: boundaries } = useGradingBoundaries(activeScaleId);
 
   const [academicYear, setAcademicYear] = useState("");
   const [term, setTerm] = useState("");
@@ -67,15 +79,12 @@ export default function ResultsEntry() {
   const [searchQuery, setSearchQuery] = useState("");
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  // Only reset stream when grade changes
   useEffect(() => { setStreamId(""); setSubjectId(""); }, [gradeId]);
-  // Reset exam when academic year or term changes
   useEffect(() => { setExamId(""); }, [academicYear, term]);
 
   const streams = useStreams(gradeId);
   const students = useStudents(gradeId, streamId);
 
-  // Derive available academic years, terms, and exams from data
   const academicYears = useMemo(() => {
     if (!exams.data) return [];
     const years = new Set(exams.data.map((e) => e.academic_year));
@@ -146,6 +155,7 @@ export default function ResultsEntry() {
   const marksInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const ready = !!(gradeId && streamId && subjectId && examId);
+  const outOf = 100;
 
   const filteredStudents = useMemo(() => {
     if (!students.data) return [];
@@ -157,6 +167,41 @@ export default function ResultsEntry() {
         s.admission_number.toLowerCase().includes(q),
     );
   }, [students.data, searchQuery]);
+
+  // Compute per-student marks, grade, points
+  const computedRows = useMemo(() => {
+    const result: Record<string, { marks: number | null; grade: string | null; points: number | null; remarks: string }> = {};
+    for (const s of filteredStudents) {
+      const m = rows[s.id]?.marks;
+      const marks = m === "" || m == null ? null : Number(m);
+      let grade: string | null = null;
+      let pts: number | null = null;
+      let remarks = rows[s.id]?.remarks ?? "";
+      if (marks != null && !isNaN(marks)) {
+        if (boundaries && boundaries.length > 0) {
+          const computed = computeGradeFromBoundaries(marks, outOf, boundaries);
+          grade = computed.grade_letter;
+          pts = computed.points;
+          if (!remarks) remarks = computed.remarks ?? "";
+        } else {
+          grade = computeGrade(marks, outOf);
+          pts = gradeToPoints(grade);
+          if (!remarks) remarks = autoRemarks(grade);
+        }
+      }
+      result[s.id] = { marks, grade, points: pts, remarks };
+    }
+    return result;
+  }, [filteredStudents, rows, boundaries]);
+
+  // Compute positions across the full stream (not just filtered)
+  const positions = useMemo(() => {
+    const allIds = (students.data ?? []).map((s) => s.id);
+    return computePositions(allIds, (id) => {
+      const m = rows[id]?.marks;
+      return m === "" || m == null ? 0 : Number(m);
+    });
+  }, [rows, students.data]);
 
   const stats = useMemo(() => {
     const allStudents = students.data ?? [];
@@ -192,8 +237,8 @@ export default function ResultsEntry() {
   function setMark(studentId: string, value: string) {
     if (value !== "" && !/^\d*\.?\d*$/.test(value)) return;
     const num = Number(value);
-    if (value !== "" && (num < 0 || num > 100)) {
-      setValidationErrors((prev) => ({ ...prev, [studentId]: "Marks must be between 0 and 100" }));
+    if (value !== "" && (num < 0 || num > outOf)) {
+      setValidationErrors((prev) => ({ ...prev, [studentId]: `Marks must be between 0 and ${outOf}` }));
     } else {
       setValidationErrors((prev) => {
         const next = { ...prev };
@@ -227,8 +272,8 @@ export default function ResultsEntry() {
       const m = rows[s.id]?.marks;
       if (m !== "" && m != null && m !== undefined) {
         const num = Number(m);
-        if (isNaN(num) || num < 0 || num > 100) {
-          errors[s.id] = "Marks must be between 0 and 100";
+        if (isNaN(num) || num < 0 || num > outOf) {
+          errors[s.id] = `Marks must be between 0 and ${outOf}`;
           hasError = true;
         }
       }
@@ -243,7 +288,19 @@ export default function ResultsEntry() {
       const payload = students.data!.map((s) => {
         const m = rows[s.id]?.marks;
         const marks = m === "" || m == null ? 0 : Number(m);
-        const grade = computeGrade(marks, 100);
+        let gradeLetter: string | null = null;
+        let pts: number | null = null;
+        let remarks = rows[s.id]?.remarks ?? "";
+        if (boundaries && boundaries.length > 0) {
+          const computed = computeGradeFromBoundaries(marks, outOf, boundaries);
+          gradeLetter = computed.grade_letter;
+          pts = computed.points;
+          if (!remarks) remarks = computed.remarks ?? "";
+        } else {
+          gradeLetter = computeGrade(marks, outOf);
+          pts = gradeToPoints(gradeLetter);
+          if (!remarks) remarks = autoRemarks(gradeLetter);
+        }
         return {
           exam_id: examId,
           grade_id: gradeId,
@@ -251,9 +308,10 @@ export default function ResultsEntry() {
           subject_id: subjectId,
           student_id: s.id,
           marks,
-          out_of: 100,
-          grade_letter: grade,
-          remarks: rows[s.id]?.remarks || autoRemarks(grade),
+          out_of: outOf,
+          grade_letter: gradeLetter,
+          points: pts,
+          remarks,
           published: doPublish,
           entered_by: user?.id ?? null,
         };
@@ -290,7 +348,7 @@ export default function ResultsEntry() {
   });
 
   function downloadTemplate() {
-    const headers = ["Admission Number", "Student Name", "Marks (out of 100)"];
+    const headers = ["Admission Number", "Student Name", `Marks (out of ${outOf})`];
     const sampleRows = students.data?.slice(0, 3).map((s) => [
       s.admission_number,
       s.full_name,
@@ -344,13 +402,12 @@ export default function ResultsEntry() {
       const student = studentMap.get(row.admission_number);
       if (student) {
         const marks = Number(row.marks);
-        if (!isNaN(marks) && marks >= 0 && marks <= 100) {
-          const grade = computeGrade(marks, 100);
+        if (!isNaN(marks) && marks >= 0 && marks <= outOf) {
           setRows((prev) => ({
             ...prev,
             [student.id]: {
               marks: String(marks),
-              remarks: prev[student.id]?.remarks || autoRemarks(grade),
+              remarks: prev[student.id]?.remarks ?? "",
             },
           }));
           imported++;
@@ -417,12 +474,13 @@ export default function ResultsEntry() {
   const selectedGrade = grades.data?.find((g) => g.id === gradeId);
   const selectedStream = streams.data?.find((s) => s.id === streamId);
 
-  // Helpers for empty-state guidance
   const hasNoGrades = !grades.isLoading && grades.data?.length === 0;
   const hasNoSubjects = !subjects.isLoading && subjects.data?.length === 0;
   const hasNoExams = !exams.isLoading && exams.data?.length === 0;
   const hasNoStreams = !streams.isLoading && streams.data?.length === 0 && !!gradeId;
   const hasNoStudents = !students.isLoading && students.data?.length === 0 && !!streamId;
+
+  const gradingLabel = settings?.grading_method === "cbc" ? "CBC" : settings?.grading_method === "percentage" ? "Percentage" : "KCSE";
 
   return (
     <div className="space-y-4">
@@ -431,7 +489,7 @@ export default function ResultsEntry() {
         <div>
           <h2 className="text-lg font-semibold text-slate-800">Results Entry</h2>
           <p className="text-sm text-slate-500">
-            Enter and manage student examination results
+            Enter and manage student examination results — {gradingLabel} grading
           </p>
         </div>
       </div>
@@ -496,7 +554,6 @@ export default function ResultsEntry() {
           </div>
         </div>
 
-        {/* Active selection summary */}
         {ready && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <span className="rounded-md bg-slate-100 px-2 py-1 font-medium">{selectedGrade?.name}</span>
@@ -653,18 +710,20 @@ export default function ResultsEntry() {
                       <th className="px-4 py-3 font-medium">#</th>
                       <th className="px-4 py-3 font-medium">Adm. No.</th>
                       <th className="px-4 py-3 font-medium">Student Name</th>
-                      <th className="px-4 py-3 font-medium">Stream</th>
-                      <th className="px-4 py-3 font-medium">Subject</th>
-                      <th className="px-4 py-3 font-medium">Marks /100</th>
+                      <th className="px-4 py-3 font-medium">Marks /{outOf}</th>
                       <th className="px-4 py-3 font-medium">Grade</th>
+                      <th className="px-4 py-3 font-medium">Points</th>
+                      <th className="px-4 py-3 font-medium">Position</th>
                       <th className="px-4 py-3 font-medium">Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredStudents.map((s, i) => {
-                      const m = rows[s.id]?.marks;
-                      const marks = m === "" || m == null ? null : Number(m);
-                      const grade = marks != null ? computeGrade(marks, 100) : null;
+                      const computed = computedRows[s.id];
+                      const marks = computed?.marks ?? null;
+                      const grade = computed?.grade ?? null;
+                      const pts = computed?.points ?? null;
+                      const pos = positions[s.id];
                       const hasError = !!validationErrors[s.id];
                       const existingResult = existing?.[s.id];
                       const isRowPublished = existingResult?.published ?? false;
@@ -679,15 +738,13 @@ export default function ResultsEntry() {
                           <td className="px-4 py-2 text-slate-400">{i + 1}</td>
                           <td className="px-4 py-2 font-mono text-xs text-slate-600">{s.admission_number}</td>
                           <td className="px-4 py-2 font-medium text-slate-700">{s.full_name}</td>
-                          <td className="px-4 py-2 text-slate-500">{(s as any).stream?.name ?? "—"}</td>
-                          <td className="px-4 py-2 text-slate-500">{selectedSubject?.name ?? "—"}</td>
                           <td className="px-4 py-2">
                             <div className="flex items-center gap-1">
                               <input
                                 ref={(el) => { marksInputRefs.current[s.id] = el; }}
                                 type="number"
                                 min={0}
-                                max={100}
+                                max={outOf}
                                 step={1}
                                 className={`input w-20 text-sm ${hasError ? "border-red-400 focus:border-red-500 focus:ring-red-200" : ""}`}
                                 value={rows[s.id]?.marks ?? ""}
@@ -707,6 +764,25 @@ export default function ResultsEntry() {
                             {grade && (
                               <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${gradeColor(grade)}`}>
                                 {grade}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2">
+                            {pts != null && (
+                              <span className="inline-flex items-center gap-1 text-sm font-medium text-slate-700">
+                                <Hash size={12} className="text-slate-400" />
+                                {pts}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2">
+                            {pos != null && marks != null && (
+                              <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                                pos === 1 ? "bg-yellow-100 text-yellow-800" :
+                                pos <= 3 ? "bg-slate-100 text-slate-700" :
+                                "text-slate-500"
+                              }`}>
+                                {pos}
                               </span>
                             )}
                           </td>
@@ -800,7 +876,7 @@ export default function ResultsEntry() {
                     {importPreview.map((row, i) => {
                       const student = students.data?.find((s) => s.admission_number === row.admission_number);
                       const marks = Number(row.marks);
-                      const valid = student && !isNaN(marks) && marks >= 0 && marks <= 100;
+                      const valid = student && !isNaN(marks) && marks >= 0 && marks <= outOf;
                       return (
                         <tr key={i} className={`border-t border-slate-100 ${valid ? "" : "bg-red-50"}`}>
                           <td className="px-3 py-1.5 font-mono">{row.admission_number}</td>

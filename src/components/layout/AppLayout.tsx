@@ -14,6 +14,7 @@ import {
   UserCog,
   Menu,
   LogOut,
+  Settings,
 } from "lucide-react";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
@@ -38,6 +39,7 @@ const navItems: NavItem[] = [
 ];
 
 const adminItems: NavItem[] = [
+  { to: "/school-settings", label: "School Settings", icon: Settings, headOnly: true },
   { to: "/grades", label: "Grades", icon: Layers, headOnly: true },
   { to: "/streams", label: "Streams", icon: GraduationCap, headOnly: true },
   { to: "/subjects", label: "Subjects", icon: BookOpen, headOnly: true },

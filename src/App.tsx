@@ -15,6 +15,7 @@ import Grades from "@/pages/Grades";
 import Streams from "@/pages/Streams";
 import Subjects from "@/pages/Subjects";
 import Teachers from "@/pages/Teachers";
+import SchoolSettings from "@/pages/SchoolSettings";
 
 function RequireAuth({ children, headOnly = false }: { children: JSX.Element; headOnly?: boolean }) {
   const { user, role, loading } = useAuth();
@@ -62,6 +63,7 @@ export default function App() {
                 <Route path="/streams" element={<RequireAuthHead><Streams /></RequireAuthHead>} />
                 <Route path="/subjects" element={<RequireAuthHead><Subjects /></RequireAuthHead>} />
                 <Route path="/teachers" element={<RequireAuthHead><Teachers /></RequireAuthHead>} />
+                <Route path="/school-settings" element={<RequireAuthHead><SchoolSettings /></RequireAuthHead>} />
               </Routes>
             </AppLayout>
           </RequireAuth>

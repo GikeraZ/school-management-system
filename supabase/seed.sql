@@ -6,6 +6,21 @@
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
+-- School Settings (configurable)
+-- ---------------------------------------------------------------------------
+update public.school_settings
+set
+  school_name = 'Sunrise Academy',
+  school_type = 'primary',
+  grading_method = 'percentage',
+  motto = 'Knowledge is Power',
+  address = 'P.O. Box 12345-00100, Nairobi',
+  phone = '+254712345678',
+  email = 'info@sunrise.ac.ke',
+  academic_year = '2026'
+where id = (select id from public.school_settings limit 1);
+
+-- ---------------------------------------------------------------------------
 -- Academic structure: Grades
 -- ---------------------------------------------------------------------------
 insert into public.grades (name, level) values

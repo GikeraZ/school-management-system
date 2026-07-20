@@ -2,17 +2,20 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
+import { useSchoolSettings } from "@/lib/hooks";
 import { Button, Input, Label, Card } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { EmptyState, Spinner } from "@/components/EmptyState";
 import { useToast } from "@/components/Toast";
 import { Layers, Plus } from "lucide-react";
+import { isPrimarySchool, isSecondarySchool } from "@/lib/utils";
 import type { Grade } from "@/lib/types";
 
 export default function Grades() {
   const qc = useQueryClient();
   const toast = useToast();
   const { isHeadTeacher } = useAuth();
+  const { data: settings } = useSchoolSettings();
 
   const { data, isLoading } = useQuery({
     queryKey: ["grades"],
@@ -73,18 +76,31 @@ export default function Grades() {
 
   if (isLoading) return <div className="flex justify-center py-20"><Spinner className="h-8 w-8" /></div>;
 
+  const schoolType = settings?.school_type ?? "primary";
+  const title = isPrimarySchool(schoolType) ? "Grades" : isSecondarySchool(schoolType) ? "Forms" : "Classes";
+  const subtitle = isPrimarySchool(schoolType)
+    ? "PP1 – Grade 8"
+    : isSecondarySchool(schoolType)
+    ? "Form 1 – Form 4"
+    : "All classes";
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-slate-800">Grades</h2>
-          <p className="text-sm text-slate-500">Academic grades (e.g. Grade 1–8)</p>
+          <h2 className="text-lg font-semibold text-slate-800">{title}</h2>
+          <p className="text-sm text-slate-500">{subtitle}</p>
         </div>
-        {isHeadTeacher && <Button onClick={openCreate}><Plus size={16} /> Add grade</Button>}
+        {isHeadTeacher && <Button onClick={openCreate}><Plus size={16} /> Add {isSecondarySchool(schoolType) ? "form" : "grade"}</Button>}
       </div>
 
       {data?.length === 0 ? (
-        <EmptyState icon={<Layers size={40} />} title="No grades yet" description="Add your first grade to get started." action={isHeadTeacher && <Button onClick={openCreate}><Plus size={16} /> Add grade</Button>} />
+        <EmptyState
+          icon={<Layers size={40} />}
+          title={`No ${title.toLowerCase()} yet`}
+          description={`Add your first ${isSecondarySchool(schoolType) ? "form" : "grade"} to get started.`}
+          action={isHeadTeacher && <Button onClick={openCreate}><Plus size={16} /> Add {isSecondarySchool(schoolType) ? "form" : "grade"}</Button>}
+        />
       ) : (
         <Card>
           <table className="w-full text-sm">
@@ -113,7 +129,7 @@ export default function Grades() {
         </Card>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Edit grade" : "Add grade"} footer={
+      <Modal open={open} onClose={() => setOpen(false)} title={editing ? `Edit ${isSecondarySchool(schoolType) ? "form" : "grade"}` : `Add ${isSecondarySchool(schoolType) ? "form" : "grade"}`} footer={
         <>
           <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
           <Button loading={save.isPending} onClick={() => save.mutate()}>Save</Button>
@@ -122,7 +138,7 @@ export default function Grades() {
         <div className="space-y-4">
           <div>
             <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Grade 6" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={isSecondarySchool(schoolType) ? "Form 1" : "Grade 6"} />
           </div>
           <div>
             <Label>Level</Label>
