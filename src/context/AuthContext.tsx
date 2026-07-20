@@ -51,10 +51,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(data.session?.user ?? null);
       loadRole(data.session?.user ?? null).finally(() => setLoading(false));
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      const u = session?.user ?? null;
-      setUser(u);
-      loadRole(u);
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "TOKEN_REFRESHED" && session) {
+        setUser(session.user);
+      } else if (event === "SIGNED_OUT") {
+        setUser(null);
+        setRoleRow(null);
+      } else if (event === "SIGNED_IN" && session) {
+        setUser(session.user);
+        loadRole(session.user);
+      }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
