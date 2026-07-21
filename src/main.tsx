@@ -12,6 +12,12 @@ function isJwtError(msg: string | undefined): boolean {
   return !!msg && (msg.toLowerCase().includes("jwt") || msg.toLowerCase().includes("expired") || msg.toLowerCase().includes("invalid token"));
 }
 
+function clearServiceWorkerCache() {
+  if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({ type: "CLEAR_CACHE" });
+  }
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: (failureCount, error) => {
@@ -19,6 +25,7 @@ const queryClient = new QueryClient({
       if (isJwtError(msg)) {
         queryClient.clear();
         supabase.auth.signOut({ scope: "local" });
+        clearServiceWorkerCache();
         return false;
       }
       return failureCount < 2;
@@ -28,6 +35,7 @@ const queryClient = new QueryClient({
       if (isJwtError(msg)) {
         queryClient.clear();
         supabase.auth.signOut({ scope: "local" });
+        clearServiceWorkerCache();
       }
     }},
   },

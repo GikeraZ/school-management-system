@@ -94,6 +94,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setRoleRow(null);
     qc.clear();
+    if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: "CLEAR_CACHE" });
+    }
   }
 
   const value: AuthState = {
